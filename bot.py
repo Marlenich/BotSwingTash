@@ -11,7 +11,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # Замените на ваш токен от @BotFather
-BOT_TOKEN = "7683048854:AAFArPAg7Sj-YiNGIvSUmn9o1OhkDjJrTtM"
+BOT_TOKEN = "7683048854:AAFd22eUsTzqZeUzxGWdNsN8Wvopw6NVXTU"
 # Замените на ID вашего канала (отрицательное число, например: -1001234567890)
 CHANNEL_ID = -1003032674443
 
@@ -446,4 +446,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
