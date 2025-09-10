@@ -400,6 +400,12 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Запуск бота"""
+    import requests
+    try:
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
+        print("✅ Вебхук удален")
+    except:
+        pass
     # Инициализируем базу данных
     init_db()
 
@@ -440,3 +446,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
