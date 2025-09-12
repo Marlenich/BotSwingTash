@@ -4,7 +4,8 @@ import logging
 import sqlite3
 import os
 from datetime import datetime
-import time  # Добавлено для автоперезапуска
+import time
+import re
 
 # Включим логирование
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -14,6 +15,9 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7683048854:AAFd22eUsTzqZeUzxGWdNsN8Wvopw6NVXTU"
 # Замените на ID вашего канала (отрицательное число, например: -1001234567890)
 CHANNEL_ID = -1003032674443
+
+# ВАШ TELEGRAM ID - замените на свой реальный ID (узнайте у @userinfobot)
+MY_TELEGRAM_ID = 5870642170  # ← ЗАМЕНИТЕ ЭТО ЧИСЛО НА СВОЙ ID!
 
 # Стадии опроса
 (AGE, NAME, GENDER, PARAMS, PARAMS_FEMALE, CITY, LOOKING_FOR, ABOUT, RULES) = range(9)
@@ -244,6 +248,12 @@ async def finish_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Ссылка действительна для одного использования."
         )
 
+        # Добавляем команду для проверки вручную
+        await update.message.reply_text(
+            f"Если анкета не опубликовалась автоматически, используйте команду:\n"
+            f"/publish_{user_id}"
+        )
+
     except Exception as e:
         logger.error(f"Ошибка при создании ссылки: {e}")
         await update.message.reply_text(
@@ -303,6 +313,103 @@ def mark_profile_as_joined(user_id):
     conn.commit()
     conn.close()
 
+async def check_membership_and_publish(context: ContextTypes.DEFAULT_TYPE):
+    """Периодически проверяем участников и публикуем анкеты"""
+    try:
+        conn = sqlite3.connect('profiles.db')
+        cursor = conn.cursor()
+        
+        # Находим всех пользователей, которые еще не опубликованы
+        cursor.execute('SELECT user_id FROM profiles WHERE joined = FALSE')
+        users_to_check = cursor.fetchall()
+        
+        for (user_id,) in users_to_check:
+            try:
+                # Проверяем, является ли пользователь участником группы
+                member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
+                
+                if member.status in ['member', 'administrator', 'creator']:
+                    # Пользователь в группе - публикуем анкету
+                    profile = get_profile_from_db(user_id)
+                    if profile:
+                        profile_text = f"""
+👤 Имя: {profile['name']}
+⚡ {profile['gender']}
+📏 Параметры: {profile['params']}
+🏙 Город: {profile['city']}
+❤ Ищу: {profile['looking_for']}
+📞 Контакт: {profile['contact']}
+ℹ О себе: {profile['about']}
+                        """
+
+                        await context.bot.send_message(
+                            chat_id=CHANNEL_ID,
+                            text=profile_text
+                        )
+
+                        # Помечаем как опубликованную
+                        mark_profile_as_joined(user_id)
+                        logger.info(f"Анкета пользователя {user_id} опубликована")
+                        
+            except Exception as e:
+                # Если пользователь не найден в группе или другая ошибка
+                continue
+                
+        conn.close()
+        
+    except Exception as e:
+        logger.error(f"Ошибка в check_membership_and_publish: {e}")
+
+async def manual_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ручная публикация анкеты по команде"""
+    try:
+        # Извлекаем user_id из команды
+        command_text = update.message.text
+        user_id_match = re.search(r'/publish_(\d+)', command_text)
+        
+        if not user_id_match:
+            await update.message.reply_text("Неверный формат команды. Используйте: /publish_123456789")
+            return
+            
+        user_id = int(user_id_match.group(1))
+        
+        # Проверяем права пользователя (только админы или сам пользователь)
+        # ЗДЕСЬ ЗАМЕНИТЕ 123456789 НА ВАШ РЕАЛЬНЫЙ TELEGRAM ID!
+        if update.effective_user.id != user_id and update.effective_user.id not in [MY_TELEGRAM_ID]:
+            await update.message.reply_text("У вас нет прав для этой команды.")
+            return
+            
+        # Получаем анкету
+        profile = get_profile_from_db(user_id)
+        if not profile:
+            await update.message.reply_text("Анкета не найдена или уже опубликована.")
+            return
+            
+        # Публикуем анкету
+        profile_text = f"""
+👤 Имя: {profile['name']}
+⚡ {profile['gender']}
+📏 Параметры: {profile['params']}
+🏙 Город: {profile['city']}
+❤ Ищу: {profile['looking_for']}
+📞 Контакт: {profile['contact']}
+ℹ О себе: {profile['about']}
+        """
+
+        await context.bot.send_message(
+            chat_id=CHANNEL_ID,
+            text=profile_text
+        )
+
+        # Помечаем как опубликованную
+        mark_profile_as_joined(user_id)
+        
+        await update.message.reply_text("Анкета успешно опубликована!")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в manual_publish: {e}")
+        await update.message.reply_text("Произошла ошибка при публикации.")
+
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать статистику анкет"""
     try:
@@ -345,6 +452,7 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for profile in recent_waiting:
                 user_id, name, created_at = profile
                 message += f"• {name} (ID: {user_id}) - {created_at}\n"
+                message += f"  Команда для ручной публикации: /publish_{user_id}\n"
         else:
             message += "Нет анкет ожидающих публикации"
 
@@ -353,41 +461,6 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Ошибка при показе статистики: {e}")
         await update.message.reply_text("Ошибка при получении статистики")
-
-async def track_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отслеживаем новых участников в канале"""
-    try:
-        if update.message and update.message.new_chat_members:
-            for new_member in update.message.new_chat_members:
-                user_id = new_member.id
-                logger.info(f"Новый участник: {user_id}")
-
-                # Проверяем есть ли анкета для этого пользователя
-                profile = get_profile_from_db(user_id)
-                if profile:
-                    # Формируем и публикуем анкету
-                    profile_text = f"""
-👤 Имя: {profile['name']}
-⚡ {profile['gender']}
-📏 Параметры: {profile['params']}
-🏙 Город: {profile['city']}
-❤ Ищу: {profile['looking_for']}
-📞 Контакт: {profile['contact']}
-ℹ О себе: {profile['about']}
-                    """
-
-                    await context.bot.send_message(
-                        chat_id=CHANNEL_ID,
-                        text=profile_text
-                    )
-
-                    # Помечаем как опубликованную
-                    mark_profile_as_joined(user_id)
-
-                    logger.info(f"Анкета пользователя {user_id} опубликована")
-
-    except Exception as e:
-        logger.error(f"Ошибка в track_new_members: {e}")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена опроса"""
@@ -428,23 +501,22 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)]
     )
 
-    # Обработчик новых участников
-    application.add_handler(MessageHandler(
-        filters.Chat(chat_id=CHANNEL_ID) & filters.StatusUpdate.NEW_CHAT_MEMBERS,
-        track_new_members
-    ))
-
     application.add_handler(conv_handler)
 
     # Команда статистики
     application.add_handler(CommandHandler("stats", show_stats))
+    
+    # Команда для ручной публикации
+    application.add_handler(MessageHandler(filters.Regex(r'^/publish_\d+'), manual_publish))
 
     application.add_error_handler(error_handler)
+    
+    # Добавляем периодическую проверку участников
+    job_queue = application.job_queue
+    job_queue.run_repeating(check_membership_and_publish, interval=300, first=10)  # Проверка каждые 5 минут
 
     logger.info("Бот запущен!")
     application.run_polling()
 
 if __name__ == '__main__':
     main()
-
-
