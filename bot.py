@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 import time
 import re
+import asyncio
 
 # Включим логирование
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -184,7 +185,7 @@ async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ⚠️Возраст строго с 23 лет. (моложе 23 лет, попадают в БАН)
 
-Общение в чате происходит только на Русском языке, на всех остальных в личных сообщениях!
+Общение в чат е происходит только на Русском языке, на всех остальных в личных сообщениях!
 
 Общение без анкеты = БАН ⛔️
 
@@ -199,7 +200,7 @@ async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Обсуждение нетрадиционной сексуальной ориентации.
 Ущемление секс меньшинств.
 Запрещается удалять ранее написанные сообщения!
-Запрещено писать в ЛС без разрешения!
+За запрещено писать в ЛС без разрешения!
 
 ⛔️⛔️⛔️За нарушение правил БАН⛔️⛔️⛔️
 
@@ -313,53 +314,6 @@ def mark_profile_as_joined(user_id):
     conn.commit()
     conn.close()
 
-async def check_membership_and_publish(context: ContextTypes.DEFAULT_TYPE):
-    """Периодически проверяем участников и публикуем анкеты"""
-    try:
-        conn = sqlite3.connect('profiles.db')
-        cursor = conn.cursor()
-        
-        # Находим всех пользователей, которые еще не опубликованы
-        cursor.execute('SELECT user_id FROM profiles WHERE joined = FALSE')
-        users_to_check = cursor.fetchall()
-        
-        for (user_id,) in users_to_check:
-            try:
-                # Проверяем, является ли пользователь участником группы
-                member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
-                
-                if member.status in ['member', 'administrator', 'creator']:
-                    # Пользователь в группе - публикуем анкету
-                    profile = get_profile_from_db(user_id)
-                    if profile:
-                        profile_text = f"""
-👤 Имя: {profile['name']}
-⚡ {profile['gender']}
-📏 Параметры: {profile['params']}
-🏙 Город: {profile['city']}
-❤ Ищу: {profile['looking_for']}
-📞 Контакт: {profile['contact']}
-ℹ О себе: {profile['about']}
-                        """
-
-                        await context.bot.send_message(
-                            chat_id=CHANNEL_ID,
-                            text=profile_text
-                        )
-
-                        # Помечаем как опубликованную
-                        mark_profile_as_joined(user_id)
-                        logger.info(f"Анкета пользователя {user_id} опубликована")
-                        
-            except Exception as e:
-                # Если пользователь не найден в группе или другая ошибка
-                continue
-                
-        conn.close()
-        
-    except Exception as e:
-        logger.error(f"Ошибка в check_membership_and_publish: {e}")
-
 async def manual_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ручная публикация анкеты по команде"""
     try:
@@ -374,7 +328,6 @@ async def manual_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(user_id_match.group(1))
         
         # Проверяем права пользователя (только админы или сам пользователь)
-        # ЗДЕСЬ ЗАМЕНИТЕ 123456789 НА ВАШ РЕАЛЬНЫЙ TELEGRAM ID!
         if update.effective_user.id != user_id and update.effective_user.id not in [MY_TELEGRAM_ID]:
             await update.message.reply_text("У вас нет прав для этой команды.")
             return
@@ -409,6 +362,59 @@ async def manual_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Ошибка в manual_publish: {e}")
         await update.message.reply_text("Произошла ошибка при публикации.")
+
+async def check_all_memberships(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для ручной проверки всех участников"""
+    try:
+        conn = sqlite3.connect('profiles.db')
+        cursor = conn.cursor()
+        
+        # Находим всех пользователей, которые еще не опубликованы
+        cursor.execute('SELECT user_id FROM profiles WHERE joined = FALSE')
+        users_to_check = cursor.fetchall()
+        
+        published_count = 0
+        
+        for (user_id,) in users_to_check:
+            try:
+                # Проверяем, является ли пользователь участником группы
+                member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
+                
+                if member.status in ['member', 'administrator', 'creator']:
+                    # Пользователь в группе - публикуем анкету
+                    profile = get_profile_from_db(user_id)
+                    if profile:
+                        profile_text = f"""
+👤 Имя: {profile['name']}
+⚡ {profile['gender']}
+📏 Параметры: {profile['params']}
+🏙 Город: {profile['city']}
+❤ Ищу: {profile['looking_for']}
+📞 Контакт: {profile['contact']}
+ℹ О себе: {profile['about']}
+                        """
+
+                        await context.bot.send_message(
+                            chat_id=CHANNEL_ID,
+                            text=profile_text
+                        )
+
+                        # Помечаем как опубликованную
+                        mark_profile_as_joined(user_id)
+                        published_count += 1
+                        logger.info(f"Анкета пользователя {user_id} опубликована")
+                        
+            except Exception as e:
+                # Если пользователь не найден в группе или другая ошибка
+                continue
+                
+        conn.close()
+        
+        await update.message.reply_text(f"Проверка завершена! Опубликовано анкет: {published_count}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в check_all_memberships: {e}")
+        await update.message.reply_text("Произошла ошибка при проверке")
 
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать статистику анкет"""
@@ -452,9 +458,11 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for profile in recent_waiting:
                 user_id, name, created_at = profile
                 message += f"• {name} (ID: {user_id}) - {created_at}\n"
-                message += f"  Команда для ручной публикации: /publish_{user_id}\n"
+                message += f"  Команда для публикации: /publish_{user_id}\n"
         else:
             message += "Нет анкет ожидающих публикации"
+
+        message += "\n\nДля проверки всех участников используйте /check_members"
 
         await update.message.reply_text(message)
 
@@ -508,12 +516,11 @@ def main():
     
     # Команда для ручной публикации
     application.add_handler(MessageHandler(filters.Regex(r'^/publish_\d+'), manual_publish))
+    
+    # Команда для проверки всех участников
+    application.add_handler(CommandHandler("check_members", check_all_memberships))
 
     application.add_error_handler(error_handler)
-    
-    # Добавляем периодическую проверку участников
-    job_queue = application.job_queue
-    job_queue.run_repeating(check_membership_and_publish, interval=300, first=10)  # Проверка каждые 5 минут
 
     logger.info("Бот запущен!")
     application.run_polling()
