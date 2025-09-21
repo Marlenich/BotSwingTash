@@ -5,6 +5,7 @@ import sqlite3
 import os
 from datetime import datetime
 import re
+import asyncio
 
 # Включим логирование
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -88,6 +89,43 @@ def init_db():
     conn.commit()
     conn.close()
 
+def get_profile_from_db(user_id):
+    """Получить анкету из базы данных"""
+    try:
+        conn = sqlite3.connect('profiles.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM profiles WHERE user_id = ?', (user_id,))
+        profile = cursor.fetchone()
+        conn.close()
+        
+        if profile:
+            return {
+                'user_id': profile[0],
+                'name': profile[1],
+                'gender': profile[2],
+                'params': profile[3],
+                'city': profile[4],
+                'looking_for': profile[5],
+                'about': profile[6],
+                'contact': profile[7],
+                'invite_link': profile[8]
+            }
+        return None
+    except Exception as e:
+        logger.error(f"Ошибка при получении анкеты: {e}")
+        return None
+
+def mark_profile_as_joined(user_id):
+    """Пометить анкету как опубликованную"""
+    try:
+        conn = sqlite3.connect('profiles.db')
+        cursor = conn.cursor()
+        cursor.execute('UPDATE profiles SET joined = TRUE WHERE user_id = ?', (user_id,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении анкеты: {e}")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинаем опрос"""
     # 🔒 Проверка безопасности
@@ -98,16 +136,209 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text('Привет! Сколько вам лет? (ответьте цифрами)')
     return AGE
 
-# 🔒 ОБНОВЛЕННЫЕ ОБРАБОТЧИКИ С ПРОВЕРКОЙ БЕЗОПАСНОСТИ
 async def age_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик возраста"""
     if not security_check(update, context):
         return ConversationHandler.END
-    # ... остальной код age_handler
+        
+    try:
+        age = int(update.message.text)
+        if age < 18 or age > 100:
+            await update.message.reply_text('Пожалуйста, введите реальный возраст (от 18 лет).')
+            return AGE
+        context.user_data['age'] = age
+        await update.message.reply_text('Отлично! Теперь введите ваше имя:')
+        return NAME
+    except ValueError:
+        await update.message.reply_text('Пожалуйста, введите возраст цифрами:')
+        return AGE
 
 async def name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик имени"""
     if not security_check(update, context):
         return ConversationHandler.END
-    # ... остальной код name_handler
+        
+    name = update.message.text.strip()
+    if len(name) < 2 or len(name) > 50:
+        await update.message.reply_text('Пожалуйста, введите реальное имя (2-50 символов):')
+        return NAME
+        
+    context.user_data['name'] = name
+    await update.message.reply_text('Выберите ваш пол:', reply_markup=gender_keyboard)
+    return GENDER
+
+async def gender_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик пола"""
+    if not security_check(update, context):
+        return ConversationHandler.END
+        
+    gender = update.message.text
+    if gender not in ['М', 'Ж', 'Пара']:
+        await update.message.reply_text('Пожалуйста, выберите пол из предложенных вариантов:', reply_markup=gender_keyboard)
+        return GENDER
+        
+    context.user_data['gender'] = gender
+    
+    if gender == 'М':
+        await update.message.reply_text('Введите ваши параметры (рост, вес, телосложение):')
+        return PARAMS
+    elif gender == 'Ж':
+        await update.message.reply_text('Введите ваши параметры (рост, вес, параметры фигуры):')
+        return PARAMS_FEMALE
+    else:
+        await update.message.reply_text('Введите параметры пары (возрасты, внешность):')
+        return PARAMS
+
+async def params_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик параметров"""
+    if not security_check(update, context):
+        return ConversationHandler.END
+        
+    params = update.message.text.strip()
+    if len(params) < 5:
+        await update.message.reply_text('Пожалуйста, введите более подробные параметры:')
+        return PARAMS
+        
+    context.user_data['params'] = params
+    await update.message.reply_text('Введите ваш город:')
+    return CITY
+
+async def params_female_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик параметров для женщин"""
+    if not security_check(update, context):
+        return ConversationHandler.END
+        
+    params = update.message.text.strip()
+    if len(params) < 5:
+        await update.message.reply_text('Пожалуйста, введите более подробные параметры:')
+        return PARAMS_FEMALE
+        
+    context.user_data['params'] = params
+    await update.message.reply_text('Введите ваш город:')
+    return CITY
+
+async def city_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик города"""
+    if not security_check(update, context):
+        return ConversationHandler.END
+        
+    city = update.message.text.strip()
+    if len(city) < 2:
+        await update.message.reply_text('Пожалуйста, введите реальный город:')
+        return CITY
+        
+    context.user_data['city'] = city
+    await update.message.reply_text('Кого вы ищете?', reply_markup=looking_for_keyboard)
+    return LOOKING_FOR
+
+async def looking_for_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик поиска"""
+    if not security_check(update, context):
+        return ConversationHandler.END
+        
+    looking_for = update.message.text
+    if looking_for not in ['М', 'Ж', 'Пара']:
+        await update.message.reply_text('Пожалуйста, выберите из предложенных вариантов:', reply_markup=looking_for_keyboard)
+        return LOOKING_FOR
+        
+    context.user_data['looking_for'] = looking_for
+    await update.message.reply_text('Расскажите о себе (интересы, увлечения, что ищете):')
+    return ABOUT
+
+async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик информации о себе"""
+    if not security_check(update, context):
+        return ConversationHandler.END
+        
+    about = update.message.text.strip()
+    if len(about) < 10:
+        await update.message.reply_text('Пожалуйста, напишите более подробно о себе (минимум 10 символов):')
+        return ABOUT
+        
+    context.user_data['about'] = about
+    await update.message.reply_text('''📝 Правила канала:
+ ❌⭕️   ЧИТАЕМ ВНИМАТЕЛЬНО!     ❌⭕️
+
+⚠️Возраст строго с 23 лет. (моложе 23 лет, попадают в БАН)
+
+Общение в чате происходит только на Русском языке, на всех остальных в личных сообщениях!
+
+Общение в чате начинается с вывешивания анкеты!
+
+Общение без анкеты = БАН ⛔️
+
+⛔️ЗАПРЕЩЕНО:
+Оскорблять участников. 
+Мат. 
+Затрагивать религиозные, национальные, политические, 
+Обсуждение СВО, использование в имени и сообщениях украинской символики, ущемляющие других темы. 
+Вывешивать фото с голыми интимными частями тела. 
+Фото имитации секса даже если не видно важных мест.
+Любой порно и эро контент, включая секс товары.
+Реклама. Ссылки. Спам. 
+Пропаганда наркотиков, проституции, ЛГБТ.
+Обсуждение нетрадиционной сексуальной ориентации.
+Ущемление секс меньшинств. 
+Запрещается удалять ранее написанные сообщения!
+Запрещено писать в ЛС без разрешения!
+
+⛔️⛔️⛔️За нарушение правил БАН⛔️⛔️⛔️
+
+♻️Повторный вход в чат после БАНа ПЛАТНЫЙ⚠️
+
+✅ Нажимая "Согласен", вы подтверждаете, что ознакомились с правилами и согласны на публикацию вашей анкеты.''', reply_markup=rules_keyboard)
+    return RULES
+
+async def rules_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик согласия с правилами"""
+    if not security_check(update, context):
+        return ConversationHandler.END
+        
+    choice = update.message.text
+    if choice == '✅ Согласен':
+        # Сохраняем анкету в базу данных
+        user_id = update.effective_user.id
+        user_data = context.user_data
+        
+        conn = sqlite3.connect('profiles.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO profiles 
+            (user_id, name, gender, params, city, looking_for, about, contact, invite_link)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            user_id,
+            user_data.get('name'),
+            user_data.get('gender'),
+            user_data.get('params'),
+            user_data.get('city'),
+            user_data.get('looking_for'),
+            user_data.get('about'),
+            f"@{update.effective_user.username}" if update.effective_user.username else f"ID: {user_id}",
+            f"https://t.me/{update.effective_user.username}" if update.effective_user.username else ""
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+        await update.message.reply_text('''✅ Ваша анкета сохранена!
+
+📋 Для публикации анкеты вам нужно:
+1. Подписаться на наш канал
+2. Отправить команду /publish
+
+Ваша анкета будет проверена и опубликована после проверки подписки.''')
+        
+        return ConversationHandler.END
+    else:
+        await update.message.reply_text('❌ Вы не согласились с правилами. Анкета не сохранена.')
+        return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена создания анкеты"""
+    await update.message.reply_text('Создание анкеты отменено.')
+    return ConversationHandler.END
 
 # 🔒 ЗАЩИЩЕННАЯ КОМАНДА СТАТИСТИКИ
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -278,6 +509,12 @@ async def security_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Пропускаем сообщение дальше в обработчики
     return True
+
+def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик ошибок"""
+    logger.error(f"Ошибка: {context.error}")
+    if update and update.message:
+        update.message.reply_text('Произошла ошибка. Попробуйте позже.')
 
 def main():
     """Запуск бота с защитой"""
