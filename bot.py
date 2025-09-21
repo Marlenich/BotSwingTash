@@ -1,25 +1,19 @@
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 import logging
 import sqlite3
-import os
-from datetime import datetime
 import re
-import asyncio
 
 # Включим логирование
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# ID администраторов
-ADMIN_IDS = [5870642170]  # ← ЗАМЕНИТЕ НА ВАШ REAL TELEGRAM ID!
 
 # Токен бота
 BOT_TOKEN = "8406149502:AAG71sNihxvmbw-5JlIZ0Dq_hj1cIt9ZwwE"  # ← ЗАМЕНИТЕ НА НОВЫЙ ТОКЕН!
 
 # ID вашего канала/чата
 CHANNEL_ID = -1003032674443  # ← ЗАМЕНИТЕ НА ID ВАШЕГО ЧАТА
-CHAT_INVITE_LINK = "https://t.me/+UArqelqms7AzODJi"  # ← ЗАМЕНИТЕ НА ССЫЛКУ ВАШЕГО ЧАТА
+CHAT_INVITE_LINK = "https://t.me/your_chat_link"  # ← ЗАМЕНИТЕ НА ССЫЛКУ ВАШЕГО ЧАТА
 
 # Стадии опроса
 (AGE, NAME, GENDER, PARAMS, LOOKING_FOR, ABOUT, RULES) = range(7)
@@ -43,6 +37,7 @@ def init_db():
             params TEXT,
             looking_for TEXT,
             about TEXT,
+            contact TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             published BOOLEAN DEFAULT FALSE
         )
@@ -57,7 +52,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-def save_profile(user_id, user_data):
+def save_profile(user_id, user_data, contact):
     """Сохранить анкету в базу данных"""
     try:
         conn = sqlite3.connect('profiles.db')
@@ -65,8 +60,8 @@ def save_profile(user_id, user_data):
         
         cursor.execute('''
             INSERT OR REPLACE INTO profiles 
-            (user_id, age, name, gender, params, looking_for, about)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (user_id, age, name, gender, params, looking_for, about, contact)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             user_id,
             user_data.get('age'),
@@ -74,7 +69,8 @@ def save_profile(user_id, user_data):
             user_data.get('gender'),
             user_data.get('params'),
             user_data.get('looking_for'),
-            user_data.get('about', 'Не указано')
+            user_data.get('about', 'Не указано'),
+            contact
         ))
         
         conn.commit()
@@ -112,7 +108,7 @@ def generate_invite_code(user_id):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинаем опрос"""
-    await update.message.reply_text('Привет! Добро пожаловать в наш чат знакомств. \n\nСколько вам лет? (ответьте цифрами)')
+    await update.message.reply_text('Привет! Сколько вам лет? (ответьте цифрами)')
     return AGE
 
 async def age_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -162,7 +158,7 @@ async def gender_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['gender'] = gender
     
     if gender == 'Пара':
-        await update.message.reply_text('Введите параметры пары (формат: возраст1-возраст2-рост1-рост2-вес1-вес2):\nПример: 25-27-180-165-75-55')
+        await update.message.reply_text('Введите параметры пары (формат: М рост-вес-возраст, Ж рост-вес-возраст):\nПример: М 180-75-25, Ж 165-55-23')
     else:
         await update.message.reply_text('Введите ваши параметры (формат: рост-вес):\nПример: 180-75')
     
@@ -174,8 +170,8 @@ async def params_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Проверяем формат параметров
     if context.user_data['gender'] == 'Пара':
-        if not re.match(r'^\d+-\d+-\d+-\d+-\d+-\d+$', params):
-            await update.message.reply_text('Неверный формат! Используйте: возраст1-возраст2-рост1-рост2-вес1-вес2\nПример: 25-27-180-165-75-55')
+        if not re.match(r'^М \d+-\d+-\d+,\s*Ж \d+-\d+-\d+$', params):
+            await update.message.reply_text('Неверный формат! Используйте: М рост-вес-возраст, Ж рост-вес-возраст\nПример: М 180-75-25, Ж 165-55-23')
             return PARAMS
     else:
         if not re.match(r'^\d+-\d+$', params):
@@ -247,11 +243,13 @@ async def rules_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if choice == '✅ Согласен':
         user_id = update.effective_user.id
+        username = update.effective_user.username
+        contact = f"@{username}" if username else f"ID: {user_id}"
         
         # Сохраняем анкету
-        if save_profile(user_id, context.user_data):
+        if save_profile(user_id, context.user_data, contact):
             # Публикуем анкету в чат
-            profile_text = format_profile(context.user_data, user_id)
+            profile_text = format_profile(context.user_data, contact)
             
             try:
                 await context.bot.send_message(
@@ -280,20 +278,33 @@ async def rules_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ConversationHandler.END
 
-def format_profile(user_data, user_id):
+def format_profile(user_data, contact):
     """Форматирование анкеты для публикации"""
-    gender_emoji = "👨" if user_data['gender'] == 'Мужчина' else "👩" if user_data['gender'] == 'Женщина' else "👫"
-    looking_emoji = "👨" if user_data['looking_for'] == 'Мужчину' else "👩" if user_data['looking_for'] == 'Женщину' else "👫"
-    
-    profile_text = f"""
-{gender_emoji} <b>Новый участник</b> {gender_emoji}
+    if user_data['gender'] == 'Пара':
+        profile_text = f"""
+Новый участник
 
-👤 <b>Имя:</b> {user_data['name']}
-🎂 <b>Возраст:</b> {user_data['age']}
-⚡ <b>Пол:</b> {user_data['gender']}
-📏 <b>Параметры:</b> {user_data['params']}
-❤️ <b>Ищет:</b> {user_data['looking_for']} {looking_emoji}
-📝 <b>О себе:</b> {user_data['about']}
+Имя: {user_data['name']}
+Возраст: {user_data['age']}
+Пол: {user_data['gender']}
+Параметры: {user_data['params']}
+Ищет: {user_data['looking_for']}
+О себе: {user_data['about']}
+Контакт: {contact}
+
+#анкета #новыйучастник
+"""
+    else:
+        profile_text = f"""
+Новый участник
+
+Имя: {user_data['name']}
+Возраст: {user_data['age']}
+Пол: {user_data['gender']}
+Параметры: {user_data['params']}
+Ищет: {user_data['looking_for']}
+О себе: {user_data['about']}
+Контакт: {contact}
 
 #анкета #новыйучастник
 """
