@@ -21,7 +21,7 @@ ADMIN_IDS = [5870642170]  # ← ЗАМЕНИТЕ НА ВАШ REAL TELEGRAM ID!
 BLACKLIST_WORDS = [
     'crypto', 'bitcoin', 'ether', 'usdt', 'bnb', 'solana', 'xrp', 'cardano',
     'dogecoin', 'shiba', 'matic', 'dot', 'avax', 'link', 'ltc', 'ada',
-    'http://', 'https://', 't.me/', '@', '.com', '.org', '.net', '.io',
+    'http://', 'https://', 't.me/', '.com', '.org', '.net', '.io',
     'airdrop', 'free', 'money', 'investment', 'profit'
 ]
 
@@ -47,16 +47,19 @@ def security_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     
     text = update.message.text.lower()
     
-    # Проверяем на запрещенные слова
+    # Проверяем на запрещенные слова (только в тексте, не в командах)
     for word in BLACKLIST_WORDS:
-        if word in text:
+        if word in text and not text.startswith('/'):
             logger.warning(f"Обнаружено запрещенное слово: {word} от пользователя {update.effective_user.id}")
             return False
     
     # Проверяем команды (только разрешенные)
     if text.startswith('/'):
+        # Извлекаем чистую команду без @botname
         command = text.split(' ')[0].split('@')[0]
-        if not any(command.startswith(allowed) for allowed in ALLOWED_COMMANDS):
+        allowed_commands = [f'/{cmd}' for cmd in ALLOWED_COMMANDS]
+        
+        if command not in allowed_commands:
             logger.warning(f"Запрещенная команда: {command} от пользователя {update.effective_user.id}")
             return False
     
@@ -257,7 +260,7 @@ async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     context.user_data['about'] = about
     await update.message.reply_text('''📝 Правила канала:
- ❌⭕️   ЧИТАЕМ ВНИМАТЕЛЬНО!     ❌⭕️
+❌⭕️   ЧИТАЕМ ВНИМАТЕЛЬНО!     ❌⭕️
 
 ⚠️Возраст строго с 23 лет. (моложе 23 лет, попадают в БАН)
 
@@ -285,7 +288,6 @@ async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ⛔️⛔️⛔️За нарушение правил БАН⛔️⛔️⛔️
 
 ♻️Повторный вход в чат после БАНа ПЛАТНЫЙ⚠️
-
 ✅ Нажимая "Согласен", вы подтверждаете, что ознакомились с правилами и согласны на публикацию вашей анкеты.''', reply_markup=rules_keyboard)
     return RULES
 
