@@ -13,7 +13,7 @@ BOT_TOKEN = "8406149502:AAG71sNihxvmbw-5JlIZ0Dq_hj1cIt9ZwwE"  # ← ЗАМЕНИ
 
 # ID вашего канала/чата
 CHANNEL_ID = -1003032674443  # ← ЗАМЕНИТЕ НА ID ВАШЕГО ЧАТА
-CHAT_INVITE_LINK = "https://t.me/+UArqelqms7AzODJi"  # ← ЗАМЕНИТЕ НА ССЫЛКУ ВАШЕГО ЧАТА
+CHAT_INVITE_LINK = "https://t.me/your_chat_link"  # ← ЗАМЕНИТЕ НА ССЫЛКУ ВАШЕГО ЧАТА
 
 # Стадии опроса
 (AGE, NAME, GENDER, PARAMS, LOOKING_FOR, ABOUT, RULES) = range(7)
@@ -40,13 +40,6 @@ def init_db():
             contact TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             published BOOLEAN DEFAULT FALSE
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS used_invites (
-            invite_code TEXT PRIMARY KEY,
-            user_id INTEGER,
-            used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     conn.commit()
@@ -91,23 +84,13 @@ def mark_as_published(user_id):
     except Exception as e:
         logger.error(f"Ошибка при обновлении анкеты: {e}")
 
-def generate_invite_code(user_id):
-    """Генерация уникального кода приглашения"""
-    import hashlib
-    import time
-    code = hashlib.md5(f"{user_id}{time.time()}".encode()).hexdigest()[:8]
-    
-    # Сохраняем код в базу
-    conn = sqlite3.connect('profiles.db')
-    cursor = conn.cursor()
-    cursor.execute('INSERT INTO used_invites (invite_code, user_id) VALUES (?, ?)', (code, user_id))
-    conn.commit()
-    conn.close()
-    
-    return code
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинаем опрос"""
+    # Проверяем, есть ли аргументы (для инвайт-ссылок)
+    if context.args and len(context.args) > 0:
+        # Это инвайт-ссылка, но мы просто начинаем анкету заново
+        await update.message.reply_text('Для входа в чат нужно сначала заполнить анкету.')
+    
     await update.message.reply_text('Привет! Сколько вам лет? (ответьте цифрами)')
     return AGE
 
@@ -160,7 +143,7 @@ async def gender_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if gender == 'Пара':
         await update.message.reply_text('Введите параметры пары (формат: М рост-вес-возраст, Ж рост-вес-возраст):\nПример: М 180-75-25, Ж 165-55-23')
     else:
-        await update.message.reply_text('Введите ваши параметры (формат: рост-вес):\nПример: 180-75')
+        await update.message.reply_text('Введите ваши параметры (формат: рост-вес-возраст):\nПример: 180-75-25')
     
     return PARAMS
 
@@ -174,8 +157,8 @@ async def params_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text('Неверный формат! Используйте: М рост-вес-возраст, Ж рост-вес-возраст\nПример: М 180-75-25, Ж 165-55-23')
             return PARAMS
     else:
-        if not re.match(r'^\d+-\d+$', params):
-            await update.message.reply_text('Неверный формат! Используйте: рост-вес\nПример: 180-75')
+        if not re.match(r'^\d+-\d+-\d+$', params):
+            await update.message.reply_text('Неверный формат! Используйте: рост-вес-возраст\nПример: 180-75-25')
             return PARAMS
         
     context.user_data['params'] = params
@@ -259,13 +242,10 @@ async def rules_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mark_as_published(user_id)
                 
                 # Отправляем ссылку на чат
-                invite_code = generate_invite_code(user_id)
-                chat_link = f"{CHAT_INVITE_LINK}?start={invite_code}"
-                
                 await update.message.reply_text(
                     f"✅ Ваша анкета опубликована!\n\n"
-                    f"🔗 Ссылка для входа в чат: {chat_link}\n\n"
-                    f"⚠️ Внимание: эта ссылка одноразовая и привязана к вашему аккаунту."
+                    f"🔗 Ссылка для входа в чат: {CHAT_INVITE_LINK}\n\n"
+                    f"Добро пожаловать!"
                 )
                 
             except Exception as e:
@@ -315,30 +295,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text('Создание анкеты отменено.')
     return ConversationHandler.END
 
-async def check_invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверка инвайт-кода при входе по ссылке"""
-    if context.args:
-        invite_code = context.args[0]
-        
-        # Проверяем код в базе
-        conn = sqlite3.connect('profiles.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT user_id FROM used_invites WHERE invite_code = ?', (invite_code,))
-        result = cursor.fetchone()
-        conn.close()
-        
-        if result and result[0] == update.effective_user.id:
-            # Код верный и принадлежит этому пользователю
-            await update.message.reply_text(
-                f"Добро пожаловать в чат! Ваша анкета уже опубликована.\n\n"
-                f"🔗 Ссылка на чат: {CHAT_INVITE_LINK}\n\n"
-                f"Пожалуйста, ознакомьтесь с правилами чата перед общением."
-            )
-        else:
-            await update.message.reply_text("❌ Недействительная или использованная ссылка. Пройдите анкетирование через команду /start")
-    else:
-        await update.message.reply_text("Для входа в чат необходимо сначала заполнить анкету через команду /start")
-
 def main():
     """Запуск бота"""
     # Инициализируем базу данных
@@ -363,11 +319,9 @@ def main():
     )
 
     application.add_handler(conv_handler)
-    application.add_handler(CommandHandler('start', check_invite))
 
     logger.info("Бот запущен!")
     application.run_polling()
 
 if __name__ == '__main__':
     main()
-
