@@ -13,7 +13,7 @@ BOT_TOKEN = "8406149502:AAG71sNihxvmbw-5JlIZ0Dq_hj1cIt9ZwwE"  # ← ЗАМЕНИ
 
 # ID вашего канала/чата
 CHANNEL_ID = -1003032674443  # ← ЗАМЕНИТЕ НА ID ВАШЕГО ЧАТА
-CHAT_INVITE_LINK = "https://t.me/your_chat_link"  # ← ЗАМЕНИТЕ НА ССЫЛКУ ВАШЕГО ЧАТА
+CHAT_INVITE_LINK = "https://t.me/+UArqelqms7AzODJi"  # ← ЗАМЕНИТЕ НА ССЫЛКУ ВАШЕГО ЧАТА
 
 # Стадии опроса
 (AGE, NAME, GENDER, PARAMS, LOOKING_FOR, ABOUT, RULES) = range(7)
@@ -325,3 +325,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
